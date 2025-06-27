@@ -121,6 +121,11 @@ if calc_option == "PM Emission Factor":
                     file_name=f"{excel_filename}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+                # === Session Reset Button ===
+                if st.button("🔄 Reset App Session"):
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.rerun()
 
         except Exception as e:
             st.error(f"Error calculating PM EF: {e}")
