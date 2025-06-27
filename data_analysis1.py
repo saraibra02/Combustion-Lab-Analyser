@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 import os
 import plotly.express as px
+import io
 
 # Title
 st.title("Combustion Lab Analyser🔥")
@@ -108,6 +109,19 @@ if calc_option == "PM Emission Factor":
                 st.success(f"✅ Total Energy Loaded = {total_energy:.3f} MJ")
                 st.write(f"Data saved to `{excel_filename}.xlsx`")
                 st.dataframe(updated_df.tail())
+
+                # After saving updated_df to Excel
+                excel_bytes = io.BytesIO()
+                updated_df.to_excel(excel_bytes, index=False, engine='openpyxl')
+                excel_bytes.seek(0)
+
+                st.download_button(
+                    label="⬇️ Download PM EF Excel File",
+                    data=excel_bytes,
+                    file_name=f"{excel_filename}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
         except Exception as e:
             st.error(f"Error calculating PM EF: {e}")
 
