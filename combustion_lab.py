@@ -12,12 +12,12 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# == Title ==
+# Title
 st.markdown("")
 st.markdown("<h5 style='text-align: center;'>UCD College of Engineering & Architecture</h2>", unsafe_allow_html=True)
 st.markdown("<h1 style='text-align: center;'>Combustion Lab Analyzer</h2>", unsafe_allow_html=True)
 
-# > Styling 
+# (Styling) 
 st.markdown("""
     <style>
         body, .stApp {
@@ -73,12 +73,12 @@ with col7:
 st.markdown("##### Upload Raw Data 📂")
 raw_file = st.file_uploader("Please upload raw data file", type=["xlsx", "xls", "csv", "txt"])
 
+# (Calculations)
 
-# == Calculations ==
-# Setting Up Calculations Button
+# Calculations Button
 if st.button("Calculate & Save Results"):
     try:
-        # Fuel LHV properties table 
+        # Fuel LHV Properties Table 
         LHV = {
             "briquettes": 21.716,
             "wood": 18.401,
@@ -144,8 +144,14 @@ if st.button("Calculate & Save Results"):
                 df["Elapsed Time (s)"] = pd.to_numeric(df["Elapsed Time (s)"], errors="coerce")
                 df["Load Cell (kg)"] = pd.to_numeric(df["Load Cell (kg)"], errors="coerce")
                 df["mdot fuel (kg/s)"] = df["Load Cell (kg)"].diff() / df["Elapsed Time (s)"].diff()
+                if "mdot fuel (kg/s)" in df.columns:
+                    df["mdot fuel (kg/s)"] = pd.to_numeric(df["mdot fuel (kg/s)"], errors="coerce")
+                    avg_mdot = df["mdot fuel (kg/s)"].mean()
+                    df["Average mdot fuel (kg/s)"] = avg_mdot
+
             except Exception as mdot_error:
                 st.warning(f"⚠️ Couldn't calculate mdot fuel: {mdot_error}")
+
 
             # Adding Run Number to File Name
             os.makedirs("data", exist_ok=True)
@@ -177,6 +183,7 @@ st.divider()
 st.markdown("### Data Visualisation 📈")
 
 import scipy.stats as stats
+import plotly.express as px
 
 viz_type = st.selectbox(
     "Choose visualization type",
@@ -190,65 +197,109 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    cleaned_dfs = []
-    for file in uploaded_files:
-        try:
-            df = pd.read_csv(file)
-            df["Source File"] = file.name
-            df = df.apply(pd.to_numeric, errors="ignore")
-            cleaned_dfs.append(df)
-        except Exception as e:
-            st.error(f"Error loading {file.name}: {e}")
+    if viz_type == "Error bar chart (95% CI)":
+        st.markdown("#### Select a metric (must be one consistent value per file)")
 
-    if cleaned_dfs:
-        combined_df = pd.concat(cleaned_dfs, ignore_index=True)
+        allowed_metrics = ["PM EF (g/MJ)", "Total Energy (MJ)", "Average mdot fuel (kg/s)"]
+        selected_metric = st.selectbox("Metric", allowed_metrics)
 
-        # Add categorical variables if missing
-        if "fuel_type" not in combined_df.columns:
+        metric_data = []
+
+        for file in uploaded_files:
+            try:
+                df = pd.read_csv(file)
+                df.columns = df.columns.str.strip()
+
+                if selected_metric not in df.columns:
+                    st.warning(f"{file.name}: '{selected_metric}' not found — skipped.")
+                    continue
+
+                # Extract Values
+                values = pd.to_numeric(df[selected_metric], errors="coerce").dropna().unique()
+                if len(values) != 1:
+                    st.warning(f"{file.name}: Must have exactly one unique value in '{selected_metric}' — skipped.")
+                    continue
+
+                fuel = file.name.split("-")[1].replace("_", " ").title()
+                metric_data.append({"Fuel Type": fuel, selected_metric: values[0]})
+
+            except Exception as e:
+                st.warning(f"{file.name}: Error processing file: {e}")
+
+        if len(metric_data) >= 2:
+            df_summary = pd.DataFrame(metric_data)
+            stats_df = df_summary.groupby("Fuel Type")[selected_metric].agg(["mean", "std", "count"]).reset_index()
+            stats_df["sem"] = stats_df["std"] / stats_df["count"]**0.5
+            stats_df["ci95"] = stats_df["sem"] * stats.t.ppf(0.975, df=stats_df["count"] - 1)
+
+            fig = px.bar(
+                stats_df,
+                x="Fuel Type",
+                y="mean",
+                error_y="ci95",
+                title=f"{selected_metric} by Fuel Type (95% CI)",
+                labels={"mean": f"{selected_metric} (mean)"}
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(stats_df)
+        else:
+            st.info("At least two valid files with consistent values are required.")
+
+
+    else:
+        cleaned_dfs = []
+        for file in uploaded_files:
+            try:
+                if file.size == 0:
+                    st.warning(f"{file.name}: File is empty — skipped.")
+                    continue
+                df = pd.read_csv(file)
+                df["Source File"] = file.name
+                df = df.apply(pd.to_numeric, errors="ignore")
+                cleaned_dfs.append(df)
+            except Exception as e:
+                st.error(f"Error loading {file.name}: {e}")
+
+        if cleaned_dfs:
+            combined_df = pd.concat(cleaned_dfs, ignore_index=True)
+
+            # Add Derived Fields
             if "fuel_type" not in combined_df.columns:
-                # Try to extract from filename
                 combined_df["fuel_type"] = combined_df["Source File"].str.extract(r"\d{8}-(.*?)-")[0].str.replace("_", " ").str.title()
             if "appliance" not in combined_df.columns:
                 combined_df["appliance"] = combined_df["Source File"].str.extract(r"\d{8}-.*?-(.*?)-")[0].str.replace("_", " ").str.title()
 
-        # Compute mdot if possible
-        if "Elapsed Time (s)" in combined_df.columns and "Load Cell (kg)" in combined_df.columns:
-            try:
-                combined_df["Elapsed Time (s)"] = pd.to_numeric(combined_df["Elapsed Time (s)"], errors="coerce")
-                combined_df["Load Cell (kg)"] = pd.to_numeric(combined_df["Load Cell (kg)"], errors="coerce")
-                combined_df["mdot fuel (kg/s)"] = combined_df["Load Cell (kg)"].diff() / combined_df["Elapsed Time (s)"].diff()
-            except Exception as e:
-                st.warning(f"Couldn't compute mdot fuel: {e}")
+            if "Elapsed Time (s)" in combined_df.columns and "Load Cell (kg)" in combined_df.columns:
+                try:
+                    combined_df["Elapsed Time (s)"] = pd.to_numeric(combined_df["Elapsed Time (s)"], errors="coerce")
+                    combined_df["Load Cell (kg)"] = pd.to_numeric(combined_df["Load Cell (kg)"], errors="coerce")
+                    combined_df["mdot fuel (kg/s)"] = combined_df["Load Cell (kg)"].diff() / combined_df["Elapsed Time (s)"].diff()
+                except Exception as e:
+                    st.warning(f"Couldn't compute mdot fuel: {e}")
 
-        all_columns = combined_df.columns.tolist()
-        x_axis_options = set(all_columns)
-        x_axis_options.update(["fuel_type", "appliance"])  # Add only if not already there
-        x_var = st.selectbox("X-axis variable", sorted(x_axis_options), key="x_axis")
-        y_var = st.selectbox("Y-axis variable", all_columns, key="y_axis")
-        group_by_file = st.checkbox("Group data by file for comparison", value=True)
+            all_columns = combined_df.columns.tolist()
+            x_axis_options = sorted(set(all_columns + ["fuel_type", "appliance"]))
+            x_var = st.selectbox("X-axis variable", x_axis_options, key="x_axis")
+            y_var = st.selectbox("Y-axis variable", all_columns, key="y_axis")
+            group_by_file = st.checkbox("Group data by file for comparison", value=True)
 
-        st.markdown("#### Resulting Plot")
+            st.markdown("#### Resulting Plot")
 
-        if group_by_file:
-            groups = combined_df.groupby("Source File")
-        else:
-            groups = [("All Data", combined_df)]
-
-        for label, group in groups:
-            plot_df = group.copy()
+            combined_df[y_var] = pd.to_numeric(combined_df[y_var], errors="coerce")
+            plot_df = combined_df.dropna(subset=[x_var, y_var])
 
             if x_var.lower() == "time":
                 plot_df[x_var] = pd.to_datetime(plot_df[x_var], errors="coerce")
 
-            plot_df[y_var] = pd.to_numeric(plot_df[y_var], errors="coerce")
-            plot_df = plot_df.dropna(subset=[x_var, y_var])
+            color = "Source File" if group_by_file else None
 
             if viz_type == "Line Plot":
                 fig = px.line(
                     plot_df,
                     x=x_var,
                     y=y_var,
-                    color="Source File" if group_by_file else None,
+                    color=color,
                     title=f"Line Plot: {y_var} vs {x_var}",
                     labels={x_var: x_var, y_var: y_var}
                 )
@@ -258,31 +309,14 @@ if uploaded_files:
                     plot_df,
                     x=x_var,
                     y=y_var,
-                    color="Source File" if group_by_file else None,
+                    color=color,
                     title=f"Bar Chart: {y_var} vs {x_var}",
                     labels={x_var: x_var, y_var: y_var}
                 )
 
-            elif viz_type == "Error bar chart (95% CI)":
-                summary_df = plot_df.groupby(x_var)[y_var].agg(['mean', 'std', 'count']).reset_index()
-                summary_df['sem'] = summary_df['std'] / summary_df['count']**0.5
-                summary_df['ci95'] = summary_df['sem'] * stats.t.ppf(0.975, df=summary_df['count'] - 1)
-
-                fig = px.bar(
-                    summary_df,
-                    x=x_var,
-                    y='mean',
-                    error_y='ci95',
-                    labels={
-                        x_var: "Fuel Type" if x_var == "fuel_type" else "Appliance" if x_var == "appliance" else x_var,
-                        'mean': f"{y_var} (mean)"
-                    },
-                    title=f"{y_var} with 95% Confidence Interval vs {x_var}",
-                    color_discrete_sequence=["#ff512f"]
-                )
-
             st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("No valid data loaded from files.")
+
+        else:
+            st.warning("No valid data loaded from files.")
 else:
     st.info("Please upload one or more CSV files to visualize.")
